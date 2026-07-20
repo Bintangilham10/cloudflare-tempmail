@@ -1,10 +1,16 @@
 import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
-export function ok<T>(c: Context, data: T, status = 200) {
+export function ok<T>(c: Context, data: T, status: ContentfulStatusCode = 200) {
   return c.json({ success: true, data }, status);
 }
 
-export function fail(c: Context, message: string, status = 400, code?: string) {
+export function fail(
+  c: Context,
+  message: string,
+  status: ContentfulStatusCode = 400,
+  code?: string
+) {
   return c.json(
     {
       success: false,

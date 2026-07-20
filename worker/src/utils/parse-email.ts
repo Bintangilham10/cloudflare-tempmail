@@ -28,7 +28,9 @@ export async function parseRawEmail(
   maxAttachmentBytes: number
 ): Promise<ParsedInbound> {
   const rawEml =
-    typeof raw === 'string' ? raw : new TextDecoder('utf-8', { fatal: false }).decode(raw);
+    typeof raw === 'string'
+      ? raw
+      : new TextDecoder('utf-8', { fatal: false, ignoreBOM: false }).decode(raw);
 
   const parser = new PostalMime();
   const email = await parser.parse(typeof raw === 'string' ? new TextEncoder().encode(raw) : raw);

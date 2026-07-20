@@ -6,6 +6,7 @@ dist/
 .env.local
 .env.production
 *.log
+*.tsbuildinfo
 .DS_Store
 frontend/dist/
 worker/.wrangler/

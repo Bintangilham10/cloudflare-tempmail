@@ -3,9 +3,22 @@
   "version": "1.1.0",
   "private": true,
   "description": "Temporary email on Cloudflare Workers + Pages + D1",
+  "workspaces": [
+    "frontend",
+    "worker"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "npm@11.12.1",
   "scripts": {
-    "deploy:worker": "npm --prefix worker run deploy",
-    "deploy:web": "npm --prefix frontend run build && npx wrangler pages deploy frontend/dist --project-name=tempmail",
-    "db:migrate:remote": "npm --prefix worker run db:migrate:remote"
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run typecheck && npm test && npm run build",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "deploy:worker": "npm run deploy --workspace=tempmail-api",
+    "deploy:web": "npm run build --workspace=tempmail-frontend && wrangler pages deploy frontend/dist",
+    "db:migrate:remote": "npm run db:migrate:remote --workspace=tempmail-api"
   }
 }

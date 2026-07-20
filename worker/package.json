@@ -5,17 +5,25 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
     "db:create": "wrangler d1 create tempmail",
-    "db:migrate:remote": "wrangler d1 execute tempmail --remote --file=../schema.sql",
-    "types": "wrangler types"
+    "db:migrate:local": "wrangler d1 migrations apply tempmail --local",
+    "db:migrate:remote": "wrangler d1 migrations apply tempmail-prod --remote",
+    "db:migrate:staging": "wrangler d1 migrations apply tempmail-staging --remote --env staging",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "hono": "^4.6.12",
     "postal-mime": "^2.4.1"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.6",
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.7.2",
-    "wrangler": "^3.95.0"
+    "vitest": "4.1.10",
+    "wrangler": "4.112.0"
   }
 }
