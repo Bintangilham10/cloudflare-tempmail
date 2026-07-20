@@ -11,8 +11,23 @@ const PURIFY_CONFIG = {
 export function sanitizeHtml(dirty: string): string {
   if (!dirty) return '';
   const clean = String(DOMPurify.sanitize(dirty, PURIFY_CONFIG as any));
-  // Force safe links
-  return clean.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer nofollow" ');
+  const documentNode = new DOMParser().parseFromString(clean, 'text/html');
+
+  // Remote images are commonly tracking pixels. Only embedded image data survives.
+  for (const image of documentNode.querySelectorAll('img')) {
+    const source = image.getAttribute('src') || '';
+    if (!/^data:image\/(?:gif|jpe?g|png|webp);base64,/i.test(source)) {
+      image.removeAttribute('src');
+    }
+    image.removeAttribute('srcset');
+  }
+
+  for (const link of documentNode.querySelectorAll('a')) {
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener noreferrer nofollow');
+  }
+
+  return documentNode.body.innerHTML;
 }
 
 export function buildEmailSrcDoc(html: string): string {
@@ -27,7 +42,7 @@ export function buildEmailSrcDoc(html: string): string {
   body {
     margin: 0;
     padding: 16px;
-    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     font-size: 14px;
     line-height: 1.55;
     color: #0f172a;

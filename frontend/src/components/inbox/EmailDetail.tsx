@@ -98,7 +98,7 @@ export function EmailDetail({
           <iframe
             title="email-body"
             className="email-html-frame min-h-[320px]"
-            sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+            sandbox="allow-popups"
             srcDoc={srcDoc}
           />
         ) : (
