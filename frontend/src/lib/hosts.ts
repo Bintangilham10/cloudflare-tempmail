@@ -1,41 +1,104 @@
-/** Public inbox host(s) */
-const PUBLIC_HOSTS = new Set([
-  'tempmail.boslay.works',
-  'localhost',
-  '127.0.0.1',
-]);
+interface FrontendEnv {
+  DEV?: boolean;
+  VITE_PUBLIC_HOST?: string;
+  VITE_ADMIN_HOST?: string;
+  VITE_PUBLIC_INBOX_URL?: string;
+  VITE_API_BASE?: string;
+}
 
-/** Admin panel host(s) */
-const ADMIN_HOSTS = new Set([
-  'admin.boslay.works',
-]);
+export interface FrontendConfig {
+  publicHost: string;
+  adminHost: string;
+  publicInboxUrl: string;
+  apiBase: string;
+  development: boolean;
+}
 
-/** Canonical public inbox URL (production) */
-export const PUBLIC_INBOX_URL = 'https://tempmail.boslay.works';
+function required(name: keyof FrontendEnv, value: string | undefined): string {
+  const normalized = value?.trim();
+  if (!normalized) throw new Error(`${name} must be configured`);
+  return normalized;
+}
+
+function hostname(name: keyof FrontendEnv, value: string): string {
+  if (
+    value !== value.toLowerCase() ||
+    value.includes('://') ||
+    value.includes('/') ||
+    !/^(?:localhost|127\.0\.0\.1|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})$/.test(
+      value
+    )
+  ) {
+    throw new Error(`${name} must be a lowercase hostname without a scheme or path`);
+  }
+  return value;
+}
+
+function absoluteUrl(name: keyof FrontendEnv, value: string, development: boolean): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an absolute URL`);
+  }
+  if (!development && parsed.protocol !== 'https:') {
+    throw new Error(`${name} must use HTTPS in production`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error(`${name} is not a supported public URL`);
+  }
+  return parsed.href.replace(/\/$/, '');
+}
+
+export function resolveFrontendConfig(env: FrontendEnv): FrontendConfig {
+  const development = env.DEV === true;
+  const publicHost = hostname(
+    'VITE_PUBLIC_HOST',
+    required('VITE_PUBLIC_HOST', env.VITE_PUBLIC_HOST ?? (development ? 'localhost' : undefined))
+  );
+  const adminHost = hostname(
+    'VITE_ADMIN_HOST',
+    required('VITE_ADMIN_HOST', env.VITE_ADMIN_HOST ?? (development ? 'localhost' : undefined))
+  );
+  const publicInboxUrl = absoluteUrl(
+    'VITE_PUBLIC_INBOX_URL',
+    required(
+      'VITE_PUBLIC_INBOX_URL',
+      env.VITE_PUBLIC_INBOX_URL ?? (development ? 'http://localhost:5173' : undefined)
+    ),
+    development
+  );
+  const apiBase = absoluteUrl(
+    'VITE_API_BASE',
+    required('VITE_API_BASE', env.VITE_API_BASE ?? (development ? 'http://localhost:8787' : undefined)),
+    development
+  );
+
+  return { publicHost, adminHost, publicInboxUrl, apiBase, development };
+}
+
+export const frontendConfig = resolveFrontendConfig(import.meta.env);
 
 export function getHostname(): string {
   if (typeof window === 'undefined') return '';
   return window.location.hostname.toLowerCase();
 }
 
-export function isAdminHost(hostname = getHostname()): boolean {
-  if (ADMIN_HOSTS.has(hostname)) return true;
-  // Local dev: /admin path still works on localhost
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return false;
-  return false;
+export function isAdminHost(hostnameValue = getHostname()): boolean {
+  return hostnameValue === frontendConfig.adminHost;
 }
 
-export function isLocalHost(hostname = getHostname()): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1';
+export function isLocalHost(hostnameValue = getHostname()): boolean {
+  return hostnameValue === 'localhost' || hostnameValue === '127.0.0.1';
 }
 
-export function isPublicHost(hostname = getHostname()): boolean {
-  return PUBLIC_HOSTS.has(hostname) || isLocalHost(hostname);
+export function isPublicHost(hostnameValue = getHostname()): boolean {
+  return hostnameValue === frontendConfig.publicHost;
 }
 
-/** Query ?admin=1 on localhost enables admin UI during development */
+/** Query ?admin=1 or /admin enables the admin UI only in local development. */
 export function wantLocalAdmin(): boolean {
-  if (!isLocalHost()) return false;
+  if (!frontendConfig.development || !isLocalHost()) return false;
   try {
     return (
       new URLSearchParams(window.location.search).get('admin') === '1' ||
@@ -50,10 +113,6 @@ export function shouldShowAdminApp(): boolean {
   return isAdminHost() || wantLocalAdmin();
 }
 
-/** URL for opening the public inbox from admin UI */
 export function getPublicInboxUrl(): string {
-  if (isLocalHost()) {
-    return `${window.location.protocol}//${window.location.host}/`;
-  }
-  return PUBLIC_INBOX_URL;
+  return frontendConfig.publicInboxUrl;
 }

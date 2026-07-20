@@ -1,6 +1,7 @@
 import { getAdminToken, getMailbox } from './storage';
+import { frontendConfig } from './hosts';
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') || '';
+const API_BASE = frontendConfig.apiBase;
 
 export class ApiError extends Error {
   status: number;
@@ -42,6 +43,7 @@ async function request<T>(
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    credentials: options.admin ? 'include' : options.credentials,
   });
 
   const contentType = res.headers.get('Content-Type') || '';
