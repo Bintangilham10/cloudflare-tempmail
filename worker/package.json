@@ -1,0 +1,21 @@
+{
+  "name": "tempmail-api",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create tempmail",
+    "db:migrate:remote": "wrangler d1 execute tempmail --remote --file=../schema.sql",
+    "types": "wrangler types"
+  },
+  "dependencies": {
+    "hono": "^4.6.12",
+    "postal-mime": "^2.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.95.0"
+  }
+}
