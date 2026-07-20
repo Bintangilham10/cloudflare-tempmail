@@ -1,0 +1,28 @@
+# Tempmail API — Cloudflare Worker
+# Deploy dari folder worker/:  npx wrangler deploy
+#
+# WAJIB ganti database_id hasil: npx wrangler d1 create tempmail
+# Sesuaikan ALLOWED_* dengan domain production Anda.
+
+name = "tempmail-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tempmail"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+# Origin UI inbox publik (CORS API mailbox), ganti yourdomain.com dengan domainmu
+ALLOWED_ORIGINS = "https://tempmail.yourdomain.com"
+# Origin panel admin saja (login/setup + admin API), ganti yourdomain.com dengan domainmu
+ALLOWED_ADMIN_ORIGINS = "https://admin.yourdomain.com"
+# Opsional: wajib diisi saat first setup admin jika di-set
+# ADMIN_BOOTSTRAP_SECRET = "ganti-dengan-string-rahasia-panjang"
