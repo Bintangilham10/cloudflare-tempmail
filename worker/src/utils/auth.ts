@@ -1,4 +1,6 @@
 const encoder = new TextEncoder();
+export const PASSWORD_HASH_ITERATIONS = 600_000;
+const MAX_ACCEPTED_HASH_ITERATIONS = 1_000_000;
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -56,8 +58,8 @@ async function deriveKey(password: string, salt: Uint8Array, iterations = 100_00
  */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await deriveKey(password, salt, 100_000);
-  return `pbkdf2$100000$${toHex(salt)}$${toHex(hash)}`;
+  const hash = await deriveKey(password, salt, PASSWORD_HASH_ITERATIONS);
+  return `pbkdf2$${PASSWORD_HASH_ITERATIONS}$${toHex(salt)}$${toHex(hash)}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
@@ -69,7 +71,13 @@ export async function verifyPassword(password: string, stored: string): Promise<
     if (saltHex.length !== 32 || hashHex.length !== 64) return false;
 
     const iterations = Number(iterStr);
-    if (!Number.isFinite(iterations) || iterations < 1) return false;
+    if (
+      !Number.isSafeInteger(iterations) ||
+      iterations < 1 ||
+      iterations > MAX_ACCEPTED_HASH_ITERATIONS
+    ) {
+      return false;
+    }
 
     const salt = fromHex(saltHex);
     const expected = fromHex(hashHex);
@@ -82,6 +90,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
   } catch {
     return false;
   }
+}
+
+export function passwordHashNeedsUpgrade(stored: string): boolean {
+  const [algo, iterStr] = stored.split('$');
+  return algo !== 'pbkdf2' || Number(iterStr) < PASSWORD_HASH_ITERATIONS;
 }
 
 export function isValidLocalPart(local: string): boolean {

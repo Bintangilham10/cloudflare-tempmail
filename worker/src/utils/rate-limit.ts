@@ -143,12 +143,9 @@ export async function authDelay(): Promise<void> {
 
 export function isAllowedAdminOrigin(origin: string | undefined, env: { ALLOWED_ADMIN_ORIGINS?: string; ALLOWED_ORIGINS?: string }): boolean {
   if (!origin) return false;
-  const adminList = (env.ALLOWED_ADMIN_ORIGINS || 'https://admin.boslay.works')
+  const adminList = (env.ALLOWED_ADMIN_ORIGINS || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  if (adminList.includes(origin)) return true;
-  // localhost for dev
-  if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) return true;
-  return false;
+  return adminList.includes(origin);
 }
