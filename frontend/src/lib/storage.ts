@@ -2,7 +2,6 @@ const KEYS = {
   theme: 'tempmail_theme',
   lang: 'tempmail_lang',
   mailbox: 'tempmail_mailbox',
-  adminToken: 'tempmail_admin_token',
 } as const;
 
 export type Theme = 'light' | 'dark';
@@ -56,15 +55,10 @@ export function setMailbox(box: StoredMailbox | null) {
   else localStorage.setItem(KEYS.mailbox, JSON.stringify(box));
 }
 
-export function getAdminToken(): string | null {
+export function clearLegacyAdminToken() {
   try {
-    return localStorage.getItem(KEYS.adminToken);
+    localStorage.removeItem('tempmail_admin_token');
   } catch {
-    return null;
+    // Storage can be unavailable in privacy-restricted browsers.
   }
-}
-
-export function setAdminToken(token: string | null) {
-  if (!token) localStorage.removeItem(KEYS.adminToken);
-  else localStorage.setItem(KEYS.adminToken, token);
 }
