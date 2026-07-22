@@ -1,4 +1,4 @@
-import { getAdminToken, getMailbox } from './storage';
+import { getMailbox } from './storage';
 import { frontendConfig } from './hosts';
 
 const API_BASE = frontendConfig.apiBase;
@@ -34,11 +34,6 @@ async function request<T>(
 
   const mailboxToken = options.mailboxToken ?? getMailbox()?.token;
   if (mailboxToken) headers.set('X-Mailbox-Token', mailboxToken);
-
-  if (options.admin) {
-    const token = getAdminToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -149,7 +144,12 @@ export const api = {
 
   // Admin
   adminStatus: () =>
-    request<{ setup_completed: boolean; site_name: string; ttl_hours: number }>('/api/admin/status'),
+    request<{ setup_completed: boolean; site_name: string; ttl_hours: number }>('/api/admin/status', {
+      admin: true,
+    }),
+
+  adminSession: () =>
+    request<{ authenticated: boolean }>('/api/admin/session', { admin: true }),
 
   adminSetup: (body: {
     password: string;
@@ -157,15 +157,17 @@ export const api = {
     site_name?: string;
     ttl_hours?: number;
   }) =>
-    request<{ token: string; expires_in: number }>('/api/admin/setup', {
+    request<{ expires_in: number }>('/api/admin/setup', {
       method: 'POST',
       body: JSON.stringify(body),
+      admin: true,
     }),
 
   adminLogin: (password: string) =>
-    request<{ token: string; expires_in: number }>('/api/admin/login', {
+    request<{ expires_in: number }>('/api/admin/login', {
       method: 'POST',
       body: JSON.stringify({ password }),
+      admin: true,
     }),
 
   adminLogout: () =>
@@ -181,7 +183,11 @@ export const api = {
     }>('/api/admin/stats', { admin: true }),
 
   adminSettings: () =>
-    request<{ site_name: string; ttl_hours: number; max_attachment_bytes: number }>(
+    request<{
+      site_name: string;
+      ttl_hours: number;
+      max_attachment_bytes: number;
+    }>(
       '/api/admin/settings',
       { admin: true }
     ),
@@ -192,7 +198,12 @@ export const api = {
     max_attachment_bytes?: number;
     new_password?: string;
   }) =>
-    request<{ site_name: string; ttl_hours: number; max_attachment_bytes: number }>(
+    request<{
+      site_name: string;
+      ttl_hours: number;
+      max_attachment_bytes: number;
+      sessions_revoked: boolean;
+    }>(
       '/api/admin/settings',
       { method: 'PUT', body: JSON.stringify(body), admin: true }
     ),
