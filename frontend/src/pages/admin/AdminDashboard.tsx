@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
-import { setAdminToken } from '../../lib/storage';
 import { getPublicInboxUrl } from '../../lib/hosts';
 import { DomainManager } from './DomainManager';
 import type { ToastKind } from '../../components/ui/Toast';
@@ -24,7 +23,7 @@ export function AdminDashboard({
   });
   const [siteName, setSiteName] = useState('Tempmail');
   const [ttl, setTtl] = useState(24);
-  const [maxAtt, setMaxAtt] = useState(2097152);
+  const [maxAtt, setMaxAtt] = useState(5242880);
   const [newPassword, setNewPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -39,7 +38,6 @@ export function AdminDashboard({
       setMaxAtt(settings.max_attachment_bytes);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        setAdminToken(null);
         onLogout();
         return;
       }
@@ -68,6 +66,10 @@ export function AdminDashboard({
       setMaxAtt(updated.max_attachment_bytes);
       setNewPassword('');
       toast(t('saved'), 'success');
+      if (updated.sessions_revoked) {
+        onLogout();
+        return;
+      }
       await load();
     } catch (err) {
       toast(err instanceof ApiError ? err.message : t('errorGeneric'), 'error');
@@ -82,7 +84,6 @@ export function AdminDashboard({
     } catch {
       /* ignore */
     }
-    setAdminToken(null);
     onLogout();
   };
 
@@ -188,7 +189,8 @@ export function AdminDashboard({
                 className="input"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                minLength={8}
+                minLength={12}
+                maxLength={128}
                 placeholder="••••••••"
                 autoComplete="new-password"
               />
