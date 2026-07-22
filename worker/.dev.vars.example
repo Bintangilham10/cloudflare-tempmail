@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development only. Never commit .dev.vars.
+ADMIN_BOOTSTRAP_SECRET=replace-with-at-least-32-random-characters
+ALLOWED_ORIGINS=http://localhost:5173
+ALLOWED_ADMIN_ORIGINS=http://localhost:5173
+PUBLIC_HOST=localhost
+ADMIN_HOST=localhost
+PUBLIC_INBOX_URL=http://localhost:5173
