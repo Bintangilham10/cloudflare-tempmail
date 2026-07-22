@@ -1,4 +1,5 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '../types';
 import {
   createDomain,
@@ -9,7 +10,23 @@ import {
   setDomainActive,
   setSetting,
 } from '../db/queries';
-import { hashPassword, isValidDomain, randomToken, verifyPassword } from '../utils/auth';
+import {
+  hashPassword,
+  isValidDomain,
+  passwordHashNeedsUpgrade,
+  randomToken,
+  verifyPassword,
+} from '../utils/auth';
+import {
+  ADMIN_COOKIE_NAME,
+  ADMIN_SESSION_TTL_SECONDS,
+  createAdminSession,
+  isAdminSessionValid,
+  revokeAdminSession,
+  revokeAllAdminSessions,
+  secretsEqual,
+  validateAdminPassword,
+} from '../utils/admin-session';
 import { fail, ok } from '../utils/response';
 import {
   authDelay,
@@ -21,84 +38,87 @@ import {
 } from '../utils/rate-limit';
 
 type AppEnv = { Bindings: Env };
+type AppContext = Context<AppEnv>;
 
-const SESSION_TTL_MS = 1000 * 60 * 60 * 12; // 12 hours
+const RL_MAX = 5;
+const RL_WINDOW = 60;
+const RL_LOCK = 30 * 60;
 
-// Brute-force protection defaults
-const RL_MAX = 5; // failures
-const RL_WINDOW = 15 * 60; // seconds
-const RL_LOCK = 30 * 60; // seconds lockout
-
-function parseSessions(raw: string | null): Record<string, number> {
-  if (!raw) return {};
-  try {
-    const obj = JSON.parse(raw) as Record<string, number>;
-    const now = Date.now();
-    const cleaned: Record<string, number> = {};
-    for (const [k, exp] of Object.entries(obj)) {
-      if (typeof exp === 'number' && exp > now) cleaned[k] = exp;
-    }
-    return cleaned;
-  } catch {
-    return {};
-  }
-}
-
-async function loadSessions(db: D1Database) {
-  const raw = await getSetting(db, 'admin_sessions', '{}');
-  return parseSessions(raw);
-}
-
-async function saveSessions(db: D1Database, sessions: Record<string, number>) {
-  await setSetting(db, 'admin_sessions', JSON.stringify(sessions));
-}
-
-function rejectOrigin(c: any): Response | null {
+function rejectOrigin(c: AppContext): Response | null {
   const origin = c.req.header('Origin');
-  // Allow non-browser tools without Origin only for status health-ish; still block login abuse via rate limit.
-  // For mutating auth endpoints we require allowed admin origin when Origin header is present.
-  if (origin && !isAllowedAdminOrigin(origin, c.env)) {
+  if (!origin || !isAllowedAdminOrigin(origin, c.env)) {
     return fail(c, 'Origin not allowed for admin', 403, 'FORBIDDEN_ORIGIN');
   }
   return null;
 }
 
-async function requireAdmin(c: any): Promise<Response | null> {
-  const originErr = rejectOrigin(c);
-  if (originErr) return originErr;
+function setSessionCookie(c: AppContext, token: string): void {
+  setCookie(c, ADMIN_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Strict',
+    path: '/',
+    maxAge: ADMIN_SESSION_TTL_SECONDS,
+  });
+}
 
-  const header = c.req.header('Authorization') || '';
-  const token = header.startsWith('Bearer ')
-    ? header.slice(7).trim()
-    : c.req.header('X-Admin-Token') || '';
-  if (!token) return fail(c, 'Admin auth required', 401, 'UNAUTHORIZED');
+function clearSessionCookie(c: AppContext): void {
+  deleteCookie(c, ADMIN_COOKIE_NAME, { path: '/', secure: true });
+}
 
-  const sessions = await loadSessions(c.env.DB);
-  if (!sessions[token] || sessions[token] < Date.now()) {
+async function requireAdmin(c: AppContext): Promise<Response | null> {
+  const originError = rejectOrigin(c);
+  if (originError) return originError;
+  const token = getCookie(c, ADMIN_COOKIE_NAME) || '';
+  if (!(await isAdminSessionValid(c.env.DB, token))) {
+    clearSessionCookie(c);
     return fail(c, 'Invalid or expired admin session', 401, 'UNAUTHORIZED');
   }
   return null;
 }
 
-function rateLimitResponse(c: any, retryAfterSec: number, locked: boolean) {
-  const res = fail(
+function rateLimitResponse(c: AppContext, retryAfterSeconds: number, locked: boolean): Response {
+  const response = fail(
     c,
-    locked
-      ? `Too many failed attempts. Try again in ${retryAfterSec}s.`
-      : `Rate limited. Retry in ${retryAfterSec}s.`,
+    locked ? 'Too many failed attempts' : 'Too many requests',
     429,
     locked ? 'LOCKED' : 'RATE_LIMITED'
   );
-  res.headers.set('Retry-After', String(Math.max(1, retryAfterSec)));
-  return res;
+  response.headers.set('Retry-After', String(Math.max(1, retryAfterSeconds)));
+  return response;
+}
+
+async function enforceLoginRateLimit(c: AppContext, scope: string, ip: string): Promise<Response | null> {
+  try {
+    const edgeResult = await c.env.LOGIN_RATE_LIMITER.limit({ key: `${scope}:${ip}` });
+    if (!edgeResult.success) return rateLimitResponse(c, 60, false);
+  } catch {
+    return fail(c, 'Authentication rate limiter unavailable', 503, 'DEPENDENCY_UNAVAILABLE');
+  }
+
+  const persistentResult = await checkAuthRateLimit(c.env.DB, scope, ip, {
+    maxAttempts: RL_MAX,
+    windowSec: RL_WINDOW,
+    lockSec: RL_LOCK,
+  });
+  return persistentResult.allowed
+    ? null
+    : rateLimitResponse(c, persistentResult.retryAfterSec, persistentResult.locked);
+}
+
+async function issueSession(c: AppContext): Promise<void> {
+  const token = randomToken(32);
+  await createAdminSession(c.env.DB, token);
+  setSessionCookie(c, token);
 }
 
 export const adminApi = new Hono<AppEnv>();
 
 adminApi.get('/status', async (c) => {
-  // status is public-ish (needed by admin UI) but does not leak secrets
+  const originError = rejectOrigin(c);
+  if (originError) return originError;
   const setup = await getSetting(c.env.DB, 'setup_completed', '0');
-  const hasPassword = !!(await getSetting(c.env.DB, 'admin_password_hash', ''));
+  const hasPassword = Boolean(await getSetting(c.env.DB, 'admin_password_hash', ''));
   return ok(c, {
     setup_completed: setup === '1' && hasPassword,
     site_name: await getSetting(c.env.DB, 'site_name', 'Tempmail'),
@@ -106,145 +126,102 @@ adminApi.get('/status', async (c) => {
   });
 });
 
+adminApi.get('/session', async (c) => {
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
+  return ok(c, { authenticated: true });
+});
+
 adminApi.post('/setup', async (c) => {
-  try {
-    const originErr = rejectOrigin(c);
-    if (originErr) return originErr;
+  const originError = rejectOrigin(c);
+  if (originError) return originError;
+  if (!c.env.ADMIN_BOOTSTRAP_SECRET) {
+    return fail(c, 'Admin bootstrap secret is not configured', 503, 'BOOTSTRAP_NOT_CONFIGURED');
+  }
 
-    await authDelay();
+  await authDelay();
+  const ip = getClientIp(c);
+  const rateLimitError = await enforceLoginRateLimit(c, 'admin-setup', ip);
+  if (rateLimitError) return rateLimitError;
 
-    const ip = getClientIp(c);
-    const rl = await checkAuthRateLimit(c.env.DB, 'admin-setup', ip, {
+  const setup = await getSetting(c.env.DB, 'setup_completed', '0');
+  const existingHash = await getSetting(c.env.DB, 'admin_password_hash', '');
+  if (setup === '1' && existingHash) return fail(c, 'Setup already completed', 409, 'ALREADY_SETUP');
+
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+  const password = typeof body.password === 'string' ? body.password : '';
+  const bootstrap = typeof body.bootstrap_secret === 'string' ? body.bootstrap_secret : '';
+  if (!(await secretsEqual(bootstrap, c.env.ADMIN_BOOTSTRAP_SECRET))) {
+    const result = await recordAuthFailure(c.env.DB, 'admin-setup', ip, {
       maxAttempts: RL_MAX,
       windowSec: RL_WINDOW,
       lockSec: RL_LOCK,
     });
-    if (!rl.allowed) return rateLimitResponse(c, rl.retryAfterSec, rl.locked);
-
-    const setup = await getSetting(c.env.DB, 'setup_completed', '0');
-    const existingHash = await getSetting(c.env.DB, 'admin_password_hash', '');
-    if (setup === '1' && existingHash) {
-      await recordAuthFailure(c.env.DB, 'admin-setup', ip, {
-        maxAttempts: RL_MAX,
-        windowSec: RL_WINDOW,
-        lockSec: RL_LOCK,
-      });
-      return fail(c, 'Setup already completed', 409, 'ALREADY_SETUP');
-    }
-
-    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-    const password = typeof body.password === 'string' ? body.password : '';
-    const bootstrap = typeof body.bootstrap_secret === 'string' ? body.bootstrap_secret : '';
-
-    if (c.env.ADMIN_BOOTSTRAP_SECRET && bootstrap !== c.env.ADMIN_BOOTSTRAP_SECRET) {
-      const after = await recordAuthFailure(c.env.DB, 'admin-setup', ip, {
-        maxAttempts: RL_MAX,
-        windowSec: RL_WINDOW,
-        lockSec: RL_LOCK,
-      });
-      if (!after.allowed) return rateLimitResponse(c, after.retryAfterSec, after.locked);
-      return fail(c, 'Invalid bootstrap secret', 403, 'FORBIDDEN');
-    }
-    if (password.length < 8) {
-      return fail(c, 'Password must be at least 8 characters', 400, 'WEAK_PASSWORD');
-    }
-
-    const hash = await hashPassword(password);
-    await setSetting(c.env.DB, 'admin_password_hash', hash);
-    await setSetting(c.env.DB, 'setup_completed', '1');
-
-    if (typeof body.site_name === 'string' && body.site_name.trim()) {
-      await setSetting(c.env.DB, 'site_name', body.site_name.trim().slice(0, 64));
-    }
-    if (body.ttl_hours != null) {
-      const ttl = Math.max(1, Math.min(720, Number(body.ttl_hours) || 24));
-      await setSetting(c.env.DB, 'ttl_hours', String(ttl));
-    }
-
-    await clearAuthRateLimit(c.env.DB, 'admin-setup', ip);
-
-    const token = randomToken(32);
-    const sessions = await loadSessions(c.env.DB);
-    sessions[token] = Date.now() + SESSION_TTL_MS;
-    await saveSessions(c.env.DB, sessions);
-
-    return ok(c, { token, expires_in: SESSION_TTL_MS / 1000 }, 201);
-  } catch (e) {
-    console.error(e);
-    return fail(c, 'Setup failed', 500);
+    return result.allowed
+      ? fail(c, 'Invalid bootstrap secret', 403, 'FORBIDDEN')
+      : rateLimitResponse(c, result.retryAfterSec, result.locked);
   }
+  const passwordError = validateAdminPassword(password);
+  if (passwordError) return fail(c, passwordError, 400, 'WEAK_PASSWORD');
+
+  await setSetting(c.env.DB, 'admin_password_hash', await hashPassword(password));
+  await setSetting(c.env.DB, 'setup_completed', '1');
+  if (typeof body.site_name === 'string' && body.site_name.trim()) {
+    await setSetting(c.env.DB, 'site_name', body.site_name.trim().slice(0, 64));
+  }
+  if (body.ttl_hours != null) {
+    const ttl = Math.max(1, Math.min(720, Number(body.ttl_hours) || 24));
+    await setSetting(c.env.DB, 'ttl_hours', String(ttl));
+  }
+  await clearAuthRateLimit(c.env.DB, 'admin-setup', ip);
+  await revokeAllAdminSessions(c.env.DB);
+  await issueSession(c);
+  return ok(c, { expires_in: ADMIN_SESSION_TTL_SECONDS }, 201);
 });
 
 adminApi.post('/login', async (c) => {
-  try {
-    const originErr = rejectOrigin(c);
-    if (originErr) return originErr;
+  const originError = rejectOrigin(c);
+  if (originError) return originError;
+  await authDelay();
+  const ip = getClientIp(c);
+  const rateLimitError = await enforceLoginRateLimit(c, 'admin-login', ip);
+  if (rateLimitError) return rateLimitError;
 
-    // Slow down automated guessing
-    await authDelay();
-
-    const ip = getClientIp(c);
-    const rl = await checkAuthRateLimit(c.env.DB, 'admin-login', ip, {
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (password.length > 128) return fail(c, 'Invalid credentials', 401, 'INVALID_CREDENTIALS');
+  const hash = await getSetting(c.env.DB, 'admin_password_hash', '');
+  if (!hash) return fail(c, 'Admin is not configured', 400, 'NOT_SETUP');
+  if (!(await verifyPassword(password, hash))) {
+    const result = await recordAuthFailure(c.env.DB, 'admin-login', ip, {
       maxAttempts: RL_MAX,
       windowSec: RL_WINDOW,
       lockSec: RL_LOCK,
     });
-    if (!rl.allowed) return rateLimitResponse(c, rl.retryAfterSec, rl.locked);
-
-    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-    const password = typeof body.password === 'string' ? body.password : '';
-    const hash = await getSetting(c.env.DB, 'admin_password_hash', '');
-    if (!hash) return fail(c, 'Admin not configured. Run setup first.', 400, 'NOT_SETUP');
-
-    const valid = await verifyPassword(password, hash);
-    if (!valid) {
-      const after = await recordAuthFailure(c.env.DB, 'admin-login', ip, {
-        maxAttempts: RL_MAX,
-        windowSec: RL_WINDOW,
-        lockSec: RL_LOCK,
-      });
-      if (!after.allowed) return rateLimitResponse(c, after.retryAfterSec, after.locked);
-      // Generic message; include remaining only lightly
-      return fail(
-        c,
-        after.remaining > 0
-          ? `Invalid password (${after.remaining} attempts left)`
-          : 'Invalid password',
-        401,
-        'INVALID_CREDENTIALS'
-      );
-    }
-
-    await clearAuthRateLimit(c.env.DB, 'admin-login', ip);
-
-    const token = randomToken(32);
-    const sessions = await loadSessions(c.env.DB);
-    sessions[token] = Date.now() + SESSION_TTL_MS;
-    await saveSessions(c.env.DB, sessions);
-
-    return ok(c, { token, expires_in: SESSION_TTL_MS / 1000 });
-  } catch (e) {
-    console.error(e);
-    return fail(c, 'Login failed', 500);
+    return result.allowed
+      ? fail(c, 'Invalid credentials', 401, 'INVALID_CREDENTIALS')
+      : rateLimitResponse(c, result.retryAfterSec, result.locked);
   }
+
+  if (passwordHashNeedsUpgrade(hash)) {
+    await setSetting(c.env.DB, 'admin_password_hash', await hashPassword(password));
+  }
+  await clearAuthRateLimit(c.env.DB, 'admin-login', ip);
+  await issueSession(c);
+  return ok(c, { expires_in: ADMIN_SESSION_TTL_SECONDS });
 });
 
 adminApi.post('/logout', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
-  const header = c.req.header('Authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (token) {
-    const sessions = await loadSessions(c.env.DB);
-    delete sessions[token];
-    await saveSessions(c.env.DB, sessions);
-  }
+  const originError = rejectOrigin(c);
+  if (originError) return originError;
+  await revokeAdminSession(c.env.DB, getCookie(c, ADMIN_COOKIE_NAME) || '');
+  clearSessionCookie(c);
   return ok(c, { logged_out: true });
 });
 
 adminApi.get('/stats', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
   const stats = await getStats(c.env.DB);
   const ttl = Number(await getSetting(c.env.DB, 'ttl_hours', '24')) || 24;
   const siteName = await getSetting(c.env.DB, 'site_name', 'Tempmail');
@@ -252,95 +229,90 @@ adminApi.get('/stats', async (c) => {
 });
 
 adminApi.get('/settings', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
   return ok(c, {
     site_name: await getSetting(c.env.DB, 'site_name', 'Tempmail'),
     ttl_hours: Number(await getSetting(c.env.DB, 'ttl_hours', '24')) || 24,
-    max_attachment_bytes: Number(await getSetting(c.env.DB, 'max_attachment_bytes', '2097152')) || 2097152,
+    max_attachment_bytes:
+      Number(await getSetting(c.env.DB, 'max_attachment_bytes', '5242880')) || 5242880,
   });
 });
 
 adminApi.put('/settings', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
-  try {
-    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-    if (typeof body.site_name === 'string' && body.site_name.trim()) {
-      await setSetting(c.env.DB, 'site_name', body.site_name.trim().slice(0, 64));
-    }
-    if (body.ttl_hours != null) {
-      const ttl = Math.max(1, Math.min(720, Number(body.ttl_hours) || 24));
-      await setSetting(c.env.DB, 'ttl_hours', String(ttl));
-    }
-    if (body.max_attachment_bytes != null) {
-      const max = Math.max(64 * 1024, Math.min(5 * 1024 * 1024, Number(body.max_attachment_bytes) || 2097152));
-      await setSetting(c.env.DB, 'max_attachment_bytes', String(max));
-    }
-    if (typeof body.new_password === 'string' && body.new_password.length >= 8) {
-      await setSetting(c.env.DB, 'admin_password_hash', await hashPassword(body.new_password));
-    }
-    return ok(c, {
-      site_name: await getSetting(c.env.DB, 'site_name', 'Tempmail'),
-      ttl_hours: Number(await getSetting(c.env.DB, 'ttl_hours', '24')) || 24,
-      max_attachment_bytes: Number(await getSetting(c.env.DB, 'max_attachment_bytes', '2097152')) || 2097152,
-    });
-  } catch (e) {
-    console.error(e);
-    return fail(c, 'Failed to update settings', 500);
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+  if (typeof body.site_name === 'string' && body.site_name.trim()) {
+    await setSetting(c.env.DB, 'site_name', body.site_name.trim().slice(0, 64));
   }
+  if (body.ttl_hours != null) {
+    const ttl = Math.max(1, Math.min(720, Number(body.ttl_hours) || 24));
+    await setSetting(c.env.DB, 'ttl_hours', String(ttl));
+  }
+  if (body.max_attachment_bytes != null) {
+    const max = Math.max(64 * 1024, Math.min(5 * 1024 * 1024, Number(body.max_attachment_bytes) || 5242880));
+    await setSetting(c.env.DB, 'max_attachment_bytes', String(max));
+  }
+  let sessionsRevoked = false;
+  if (typeof body.new_password === 'string' && body.new_password) {
+    const passwordError = validateAdminPassword(body.new_password);
+    if (passwordError) return fail(c, passwordError, 400, 'WEAK_PASSWORD');
+    await setSetting(c.env.DB, 'admin_password_hash', await hashPassword(body.new_password));
+    await revokeAllAdminSessions(c.env.DB);
+    clearSessionCookie(c);
+    sessionsRevoked = true;
+  }
+  return ok(c, {
+    site_name: await getSetting(c.env.DB, 'site_name', 'Tempmail'),
+    ttl_hours: Number(await getSetting(c.env.DB, 'ttl_hours', '24')) || 24,
+    max_attachment_bytes:
+      Number(await getSetting(c.env.DB, 'max_attachment_bytes', '5242880')) || 5242880,
+    sessions_revoked: sessionsRevoked,
+  });
 });
 
 adminApi.get('/domains', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
-  const domains = await listAllDomains(c.env.DB);
-  return ok(c, domains);
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
+  return ok(c, await listAllDomains(c.env.DB));
 });
 
 adminApi.post('/domains', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
+  const domainName = typeof body.domain_name === 'string' ? body.domain_name.trim().toLowerCase() : '';
+  if (!isValidDomain(domainName)) return fail(c, 'Invalid domain name', 400, 'INVALID_DOMAIN');
   try {
-    const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-    const domainName = typeof body.domain_name === 'string' ? body.domain_name.trim().toLowerCase() : '';
-    if (!isValidDomain(domainName)) {
-      return fail(c, 'Invalid domain name', 400, 'INVALID_DOMAIN');
-    }
-    const created = await createDomain(c.env.DB, domainName);
-    return ok(c, created, 201);
-  } catch (e) {
-    const msg = String(e);
-    if (msg.includes('UNIQUE') || msg.toLowerCase().includes('unique')) {
+    return ok(c, await createDomain(c.env.DB, domainName), 201);
+  } catch (error) {
+    if (String(error).toLowerCase().includes('unique')) {
       return fail(c, 'Domain already exists', 409, 'DUPLICATE');
     }
-    console.error(e);
     return fail(c, 'Failed to create domain', 500);
   }
 });
 
 adminApi.patch('/domains/:id', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
   const id = Number(c.req.param('id'));
-  if (!Number.isFinite(id)) return fail(c, 'Invalid id', 400);
+  if (!Number.isSafeInteger(id) || id < 1) return fail(c, 'Invalid id', 400);
   const body = await c.req.json().catch(() => ({} as Record<string, unknown>));
-  if (typeof body.is_active === 'boolean') {
-    const okUpdate = await setDomainActive(c.env.DB, id, body.is_active);
-    if (!okUpdate) return fail(c, 'Domain not found', 404);
+  if (typeof body.is_active === 'boolean' && !(await setDomainActive(c.env.DB, id, body.is_active))) {
+    return fail(c, 'Domain not found', 404);
   }
-  const domains = await listAllDomains(c.env.DB);
-  const row = domains.find((d) => d.id === id);
-  if (!row) return fail(c, 'Domain not found', 404);
-  return ok(c, row);
+  const row = (await listAllDomains(c.env.DB)).find((domain) => domain.id === id);
+  return row ? ok(c, row) : fail(c, 'Domain not found', 404);
 });
 
 adminApi.delete('/domains/:id', async (c) => {
-  const authErr = await requireAdmin(c);
-  if (authErr) return authErr;
+  const authError = await requireAdmin(c);
+  if (authError) return authError;
   const id = Number(c.req.param('id'));
-  if (!Number.isFinite(id)) return fail(c, 'Invalid id', 400);
-  const deleted = await deleteDomain(c.env.DB, id);
-  if (!deleted) return fail(c, 'Domain not found', 404);
-  return ok(c, { deleted: true });
+  if (!Number.isSafeInteger(id) || id < 1) return fail(c, 'Invalid id', 400);
+  return (await deleteDomain(c.env.DB, id))
+    ? ok(c, { deleted: true })
+    : fail(c, 'Domain not found', 404);
 });
