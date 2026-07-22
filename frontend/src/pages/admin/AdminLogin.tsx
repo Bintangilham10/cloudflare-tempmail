@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { setAdminToken } from '../../lib/storage';
 import type { ToastKind } from '../../components/ui/Toast';
 
 export function AdminLogin({
@@ -42,16 +41,14 @@ export function AdminLogin({
     setLockHint(null);
     try {
       if (setupMode) {
-        const res = await api.adminSetup({
+        await api.adminSetup({
           password,
           bootstrap_secret: bootstrap || undefined,
           site_name: siteName,
           ttl_hours: ttl,
         });
-        setAdminToken(res.token);
       } else {
-        const res = await api.adminLogin(password);
-        setAdminToken(res.token);
+        await api.adminLogin(password);
       }
       onAuthed();
     } catch (err) {
@@ -138,7 +135,8 @@ export function AdminLogin({
               className="input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              minLength={8}
+              minLength={12}
+              maxLength={128}
               required
               autoComplete={setupMode ? 'new-password' : 'current-password'}
             />
