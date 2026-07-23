@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "configure": "node scripts/configure-cloudflare.mjs",
     "deploy": "node scripts/check-cloudflare-config.mjs && wrangler deploy",
     "deploy:staging": "node scripts/check-cloudflare-config.mjs && wrangler deploy --env staging",
     "db:create": "wrangler d1 create tempmail",
