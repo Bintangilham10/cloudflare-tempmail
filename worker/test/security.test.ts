@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashPassword, verifyPassword } from '../src/utils/auth';
+import { hashPassword, isReservedLocalPart, verifyPassword } from '../src/utils/auth';
 import { getAllowedOrigins, resolveCorsOrigin } from '../src/utils/cors';
 import { isAllowedAdminOrigin } from '../src/utils/rate-limit';
 import type { Env } from '../src/types';
@@ -28,9 +28,20 @@ describe('admin credential boundaries', () => {
   });
 });
 
+describe('mailbox address policy', () => {
+  it.each(['admin', 'support', 'billing', 'security', 'abuse', 'postmaster', 'webmaster', 'hostmaster', 'noreply'])(
+    'reserves %s',
+    (localPart) => expect(isReservedLocalPart(localPart)).toBe(true)
+  );
+
+  it('allows ordinary local parts', () => {
+    expect(isReservedLocalPart('random-user')).toBe(false);
+  });
+});
+
 describe('admin origin policy', () => {
   it('does not trust seller or localhost origins by default', () => {
-    expect(isAllowedAdminOrigin('https://admin.boslay.works', {})).toBe(false);
+    expect(isAllowedAdminOrigin('https://admin.seller.invalid', {})).toBe(false);
     expect(isAllowedAdminOrigin('http://localhost:5173', {})).toBe(false);
   });
 
