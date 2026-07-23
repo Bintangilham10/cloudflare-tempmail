@@ -1,30 +1,35 @@
 import type { Env } from '../types';
 
-const DEFAULT_ORIGINS = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:4173',
-];
+function parseOrigins(value: string | undefined): string[] {
+  return (value || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => Boolean(origin) && origin !== '*');
+}
+
+export function getPublicAllowedOrigins(env: Env): string[] {
+  return [...new Set(parseOrigins(env.ALLOWED_ORIGINS))];
+}
+
+export function getAdminAllowedOrigins(env: Env): string[] {
+  return [...new Set(parseOrigins(env.ALLOWED_ADMIN_ORIGINS))];
+}
 
 export function getAllowedOrigins(env: Env): string[] {
-  const publicOrigins = (env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const adminOrigins = (env.ALLOWED_ADMIN_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const merged = [...publicOrigins, ...adminOrigins];
-  // de-dupe
-  const unique = [...new Set(merged)];
-  return unique.length ? unique : DEFAULT_ORIGINS;
+  return [...new Set([...getPublicAllowedOrigins(env), ...getAdminAllowedOrigins(env)])];
 }
 
 export function resolveCorsOrigin(requestOrigin: string | undefined, env: Env): string | null {
   if (!requestOrigin) return null;
-  const allowed = getAllowedOrigins(env);
-  if (allowed.includes('*')) return requestOrigin;
-  if (allowed.includes(requestOrigin)) return requestOrigin;
-  return null;
+  return getAllowedOrigins(env).includes(requestOrigin) ? requestOrigin : null;
+}
+
+export function resolvePublicCorsOrigin(requestOrigin: string | undefined, env: Env): string | null {
+  if (!requestOrigin) return null;
+  return getPublicAllowedOrigins(env).includes(requestOrigin) ? requestOrigin : null;
+}
+
+export function resolveAdminCorsOrigin(requestOrigin: string | undefined, env: Env): string | null {
+  if (!requestOrigin) return null;
+  return getAdminAllowedOrigins(env).includes(requestOrigin) ? requestOrigin : null;
 }
