@@ -1,56 +1,93 @@
-import type { Env } from '../types';
-import { getOrCreateMailbox, getSetting, insertEmail } from '../db/queries';
-import { parseEmailAddress } from '../utils/auth';
-import { parseRawEmail } from '../utils/parse-email';
+import type { AttachmentMeta, Env } from '../types';
+import { getActiveMailboxByAddress, getSetting, insertEmail } from '../db/queries';
+import { parseEmailAddress, randomToken } from '../utils/auth';
+import {
+  EmailLimitError,
+  MAX_ATTACHMENT_BYTES,
+  MAX_RAW_EMAIL_BYTES,
+  makeSnippet,
+  parseRawEmail,
+} from '../utils/parse-email';
 
-/**
- * Cloudflare Email Routing handler.
- * Policy: auto-create mailbox if domain is active in D1.
- */
-export async function handleInboundEmail(message: ForwardableEmailMessage, env: Env): Promise<void> {
+export async function handleInboundEmail(
+  message: ForwardableEmailMessage,
+  env: Env
+): Promise<void> {
+  const recipient = parseEmailAddress(message.to || '');
+  const mailbox = recipient ? await getActiveMailboxByAddress(env.DB, recipient.address) : null;
+  if (!recipient || !mailbox) {
+    message.setReject('Recipient unavailable');
+    return;
+  }
+  if (message.rawSize > MAX_RAW_EMAIL_BYTES) {
+    message.setReject('Message exceeds receiving limits');
+    return;
+  }
+
+  const configuredAttachmentLimit = Math.min(
+    MAX_ATTACHMENT_BYTES,
+    Math.max(
+      64 * 1024,
+      Number(await getSetting(env.DB, 'max_attachment_bytes', String(MAX_ATTACHMENT_BYTES))) ||
+        MAX_ATTACHMENT_BYTES
+    )
+  );
+  const raw = await new Response(message.raw).arrayBuffer();
+
+  let parsed;
   try {
-    const toRaw = message.to || '';
-    const parsedTo = parseEmailAddress(toRaw);
-    if (!parsedTo) {
-      console.log('Drop: cannot parse recipient', toRaw);
-      message.setReject('Invalid recipient');
-      return;
+    parsed = await parseRawEmail(raw, recipient.address, configuredAttachmentLimit);
+  } catch (error) {
+    message.setReject(
+      error instanceof EmailLimitError
+        ? 'Message exceeds receiving limits'
+        : 'Message could not be processed'
+    );
+    return;
+  }
+
+  const now = new Date();
+  const storagePrefix = `messages/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${randomToken(16)}`;
+  const rawObjectKey = `${storagePrefix}/raw.eml`;
+  const storedKeys: string[] = [];
+  const attachments: AttachmentMeta[] = [];
+
+  try {
+    await env.MESSAGE_BUCKET.put(rawObjectKey, raw, {
+      httpMetadata: { contentType: 'message/rfc822' },
+    });
+    storedKeys.push(rawObjectKey);
+
+    for (let index = 0; index < parsed.attachments.length; index++) {
+      const attachment = parsed.attachments[index];
+      const objectKey = `${storagePrefix}/attachments/${index}`;
+      await env.MESSAGE_BUCKET.put(objectKey, attachment.content, {
+        httpMetadata: { contentType: 'application/octet-stream' },
+      });
+      storedKeys.push(objectKey);
+      attachments.push({
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        objectKey,
+      });
     }
-
-    const mailbox = await getOrCreateMailbox(env.DB, parsedTo.local, parsedTo.domain);
-    if (!mailbox) {
-      console.log('Drop: domain not active', parsedTo.domain);
-      message.setReject('Domain not accepted');
-      return;
-    }
-
-    const maxAtt = Number(await getSetting(env.DB, 'max_attachment_bytes', '2097152')) || 2097152;
-    const raw = await new Response(message.raw).arrayBuffer();
-    const parsed = await parseRawEmail(raw, parsedTo.address, maxAtt);
-
-    // Prefer envelope recipient as to_address
-    parsed.toAddress = parsedTo.address;
 
     await insertEmail(env.DB, mailbox.id, {
       messageId: parsed.messageId,
       fromAddress: parsed.fromAddress,
       fromName: parsed.fromName,
-      toAddress: parsed.toAddress,
+      toAddress: recipient.address,
       subject: parsed.subject,
       bodyText: parsed.bodyText,
       bodyHtml: parsed.bodyHtml,
-      rawEml: parsed.rawEml.slice(0, 1_500_000), // hard cap raw storage
-      attachments: parsed.attachments,
+      snippet: makeSnippet(parsed.bodyText, parsed.bodyHtml),
+      storagePrefix,
+      rawObjectKey,
+      attachments,
     });
-
-    console.log('Stored email for', mailbox.address, 'subject=', parsed.subject);
-  } catch (err) {
-    console.error('Inbound email error', err);
-    // Do not reject after partial processing failures hard — reject to signal CF
-    try {
-      message.setReject('Temporary processing error');
-    } catch {
-      /* ignore */
-    }
+  } catch (error) {
+    if (storedKeys.length) await env.MESSAGE_BUCKET.delete(storedKeys);
+    throw error;
   }
 }
