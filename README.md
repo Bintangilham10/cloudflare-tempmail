@@ -252,6 +252,10 @@ $env:VITE_API_BASE="https://api.example.com"
 npm run build
 ```
 
-Production siap hanya jika semua perintah hijau, tidak ada domain penjual, bootstrap takeover tertutup,
+Full `npm audit` saat ini menampilkan advisory development-tooling yang dijelaskan di
+[`SECURITY.md`](SECURITY.md). Gate deployment adalah audit `--omit=dev`; jangan menjalankan
+`npm audit fix --force`.
+
+Production siap hanya jika gate production hijau, tidak ada domain penjual, bootstrap takeover tertutup,
 attachment masuk R2, limiter menghasilkan 429, staging menerima email nyata, log tidak memuat alamat lengkap,
 subject, token, body, atau attachment, dan catch-all dapat dimatikan sebagai kill switch.
