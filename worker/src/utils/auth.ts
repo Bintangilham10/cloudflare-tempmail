@@ -102,6 +102,22 @@ export function isValidLocalPart(local: string): boolean {
   return /^[a-zA-Z0-9](?:[a-zA-Z0-9._+-]{0,62}[a-zA-Z0-9])?$/.test(local);
 }
 
+const RESERVED_LOCAL_PARTS = new Set([
+  'admin',
+  'support',
+  'billing',
+  'security',
+  'abuse',
+  'postmaster',
+  'webmaster',
+  'hostmaster',
+  'noreply',
+]);
+
+export function isReservedLocalPart(local: string): boolean {
+  return RESERVED_LOCAL_PARTS.has(local.trim().toLowerCase());
+}
+
 export function isValidDomain(domain: string): boolean {
   if (!domain || domain.length > 253) return false;
   const d = domain.trim().toLowerCase();
