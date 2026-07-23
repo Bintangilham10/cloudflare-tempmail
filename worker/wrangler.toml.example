@@ -1,0 +1,114 @@
+# Render this file with:
+# npm run configure --workspace=tempmail-api -- --domain example.com --prod-db-id <UUID> --staging-db-id <UUID>
+
+name = "tempmail-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+routes = [{ pattern = "api.__TEMPMAIL_DOMAIN__", custom_domain = true }]
+
+[triggers]
+crons = ["0 * * * *"]
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tempmail-prod"
+database_id = "__PROD_DB_ID__"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "MESSAGE_BUCKET"
+bucket_name = "tempmail-messages-prod"
+
+[[ratelimits]]
+name = "MAILBOX_RATE_LIMITER"
+namespace_id = "11001"
+[ratelimits.simple]
+limit = 5
+period = 60
+
+[[ratelimits]]
+name = "INBOX_RATE_LIMITER"
+namespace_id = "11002"
+[ratelimits.simple]
+limit = 120
+period = 60
+
+[[ratelimits]]
+name = "LOGIN_RATE_LIMITER"
+namespace_id = "11003"
+[ratelimits.simple]
+limit = 5
+period = 60
+
+[vars]
+ALLOWED_ORIGINS = "https://mail.__TEMPMAIL_DOMAIN__"
+ALLOWED_ADMIN_ORIGINS = "https://admin.__TEMPMAIL_DOMAIN__"
+PUBLIC_HOST = "mail.__TEMPMAIL_DOMAIN__"
+ADMIN_HOST = "admin.__TEMPMAIL_DOMAIN__"
+PUBLIC_INBOX_URL = "https://mail.__TEMPMAIL_DOMAIN__"
+
+[env.staging]
+name = "tempmail-api-staging"
+workers_dev = false
+routes = [{ pattern = "staging-api.__TEMPMAIL_DOMAIN__", custom_domain = true }]
+
+[env.staging.triggers]
+crons = ["0 * * * *"]
+
+[env.staging.observability.logs]
+enabled = true
+head_sampling_rate = 1.0
+invocation_logs = true
+
+[env.staging.observability.traces]
+enabled = true
+head_sampling_rate = 1.0
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "tempmail-staging"
+database_id = "__STAGING_DB_ID__"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "MESSAGE_BUCKET"
+bucket_name = "tempmail-messages-staging"
+
+[[env.staging.ratelimits]]
+name = "MAILBOX_RATE_LIMITER"
+namespace_id = "12001"
+[env.staging.ratelimits.simple]
+limit = 5
+period = 60
+
+[[env.staging.ratelimits]]
+name = "INBOX_RATE_LIMITER"
+namespace_id = "12002"
+[env.staging.ratelimits.simple]
+limit = 120
+period = 60
+
+[[env.staging.ratelimits]]
+name = "LOGIN_RATE_LIMITER"
+namespace_id = "12003"
+[env.staging.ratelimits.simple]
+limit = 5
+period = 60
+
+[env.staging.vars]
+ALLOWED_ORIGINS = "https://staging-mail.__TEMPMAIL_DOMAIN__"
+ALLOWED_ADMIN_ORIGINS = "https://staging-admin.__TEMPMAIL_DOMAIN__"
+PUBLIC_HOST = "staging-mail.__TEMPMAIL_DOMAIN__"
+ADMIN_HOST = "staging-admin.__TEMPMAIL_DOMAIN__"
+PUBLIC_INBOX_URL = "https://staging-mail.__TEMPMAIL_DOMAIN__"
