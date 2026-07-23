@@ -14,9 +14,9 @@ export default defineConfig({
           d1Databases: ['DB'],
           r2Buckets: ['MESSAGE_BUCKET'],
           ratelimits: {
-            MAILBOX_RATE_LIMITER: { namespace_id: '1', simple: { limit: 100, period: 60 } },
-            INBOX_RATE_LIMITER: { namespace_id: '2', simple: { limit: 100, period: 60 } },
-            LOGIN_RATE_LIMITER: { namespace_id: '3', simple: { limit: 100, period: 60 } },
+            MAILBOX_RATE_LIMITER: { namespace_id: '1', simple: { limit: 5, period: 60 } },
+            INBOX_RATE_LIMITER: { namespace_id: '2', simple: { limit: 120, period: 60 } },
+            LOGIN_RATE_LIMITER: { namespace_id: '3', simple: { limit: 5, period: 60 } },
           },
           bindings: {
             TEST_MIGRATIONS: migrations,
