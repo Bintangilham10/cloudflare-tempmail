@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { ExternalLink } from 'lucide-react';
-import { api, ApiError } from '../../lib/api';
-import { getPublicInboxUrl } from '../../lib/hosts';
-import { DomainManager } from './DomainManager';
-import type { ToastKind } from '../../components/ui/Toast';
+import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
+import { api, ApiError } from "../../lib/api";
+import { getPublicInboxUrl } from "../../lib/hosts";
+import { DomainManager } from "./DomainManager";
+import type { ToastKind } from "../../components/ui/Toast";
 
 export function AdminDashboard({
   t,
@@ -19,12 +19,13 @@ export function AdminDashboard({
     mailboxes: 0,
     emails: 0,
     ttl_hours: 24,
-    site_name: 'Tempmail',
+    site_name: "Tempmail",
   });
-  const [siteName, setSiteName] = useState('Tempmail');
+  const [siteName, setSiteName] = useState("Tempmail");
   const [ttl, setTtl] = useState(24);
   const [maxAtt, setMaxAtt] = useState(5242880);
-  const [newPassword, setNewPassword] = useState('');
+  const [newPassword, setNewPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +42,7 @@ export function AdminDashboard({
         onLogout();
         return;
       }
-      toast(e instanceof ApiError ? e.message : t('errorGeneric'), 'error');
+      toast(e instanceof ApiError ? e.message : t("errorGeneric"), "error");
     } finally {
       setLoading(false);
     }
@@ -60,19 +61,21 @@ export function AdminDashboard({
         ttl_hours: ttl,
         max_attachment_bytes: maxAtt,
         new_password: newPassword.length >= 8 ? newPassword : undefined,
+        current_password: newPassword.length >= 8 ? currentPassword : undefined,
       });
       setSiteName(updated.site_name);
       setTtl(updated.ttl_hours);
       setMaxAtt(updated.max_attachment_bytes);
-      setNewPassword('');
-      toast(t('saved'), 'success');
+      setNewPassword("");
+      setCurrentPassword("");
+      toast(t("saved"), "success");
       if (updated.sessions_revoked) {
         onLogout();
         return;
       }
       await load();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : t('errorGeneric'), 'error');
+      toast(err instanceof ApiError ? err.message : t("errorGeneric"), "error");
     } finally {
       setBusy(false);
     }
@@ -88,14 +91,18 @@ export function AdminDashboard({
   };
 
   if (loading) {
-    return <div className="card p-8 text-center text-sm text-slate-500">{t('loading')}</div>;
+    return (
+      <div className="card p-8 text-center text-sm text-slate-500">
+        {t("loading")}
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">{t('dashboard')}</h1>
+          <h1 className="text-2xl font-bold">{t("dashboard")}</h1>
           <p className="text-sm text-slate-500">{stats.site_name}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -107,22 +114,28 @@ export function AdminDashboard({
             title={getPublicInboxUrl()}
           >
             <ExternalLink className="h-4 w-4" />
-            {t('openInbox')}
+            {t("openInbox")}
           </a>
-          <button type="button" className="btn-secondary" onClick={() => void logout()}>
-            {t('logout')}
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void logout()}
+          >
+            {t("logout")}
           </button>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
         {[
-          { label: t('domains'), value: stats.domains },
-          { label: t('mailboxes'), value: stats.mailboxes },
-          { label: t('emails'), value: stats.emails },
+          { label: t("domains"), value: stats.domains },
+          { label: t("mailboxes"), value: stats.mailboxes },
+          { label: t("emails"), value: stats.emails },
         ].map((card) => (
           <div key={card.label} className="card p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{card.label}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {card.label}
+            </p>
             <p className="mt-1 text-3xl font-bold tabular-nums">{card.value}</p>
           </div>
         ))}
@@ -130,16 +143,16 @@ export function AdminDashboard({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="card p-5">
-          <h2 className="mb-4 text-lg font-semibold">{t('domains')}</h2>
+          <h2 className="mb-4 text-lg font-semibold">{t("domains")}</h2>
           <DomainManager t={t} toast={toast} />
         </section>
 
         <section className="card p-5">
-          <h2 className="mb-4 text-lg font-semibold">{t('settings')}</h2>
+          <h2 className="mb-4 text-lg font-semibold">{t("settings")}</h2>
           <form className="space-y-4" onSubmit={saveSettings}>
             <div>
               <label className="label" htmlFor="siteName">
-                {t('siteName')}
+                {t("siteName")}
               </label>
               <input
                 id="siteName"
@@ -150,7 +163,7 @@ export function AdminDashboard({
             </div>
             <div>
               <label className="label" htmlFor="ttlHours">
-                {t('ttlHours')}
+                {t("ttlHours")}
               </label>
               <input
                 id="ttlHours"
@@ -167,7 +180,7 @@ export function AdminDashboard({
             </div>
             <div>
               <label className="label" htmlFor="maxAtt">
-                {t('maxAttachment')}
+                {t("maxAttachment")}
               </label>
               <input
                 id="maxAtt"
@@ -180,8 +193,25 @@ export function AdminDashboard({
               />
             </div>
             <div>
+              <label className="label" htmlFor="curPass">
+                {t("password")}
+              </label>
+              <input
+                id="curPass"
+                type="password"
+                className="input"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+              <p className="mt-1 text-xs text-slate-400">
+                {t("currentPasswordHint")}
+              </p>
+            </div>
+            <div>
               <label className="label" htmlFor="newPass">
-                {t('newPassword')}
+                {t("newPassword")}
               </label>
               <input
                 id="newPass"
@@ -196,7 +226,7 @@ export function AdminDashboard({
               />
             </div>
             <button type="submit" className="btn-primary" disabled={busy}>
-              {t('save')}
+              {t("save")}
             </button>
           </form>
         </section>
