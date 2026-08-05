@@ -1,12 +1,12 @@
-import { getMailbox } from './storage';
-import { frontendConfig } from './hosts';
+import { getMailbox } from "./storage";
+import { frontendConfig } from "./hosts";
 
 const API_BASE = frontendConfig.apiBase;
 
 export class ApiError extends Error {
   status: number;
   code: string;
-  constructor(message: string, status: number, code = 'ERROR') {
+  constructor(message: string, status: number, code = "ERROR") {
     super(message);
     this.status = status;
     this.code = code;
@@ -25,33 +25,37 @@ interface ApiFail {
 
 async function request<T>(
   path: string,
-  options: RequestInit & { mailboxToken?: string; admin?: boolean } = {}
+  options: RequestInit & { mailboxToken?: string; admin?: boolean } = {},
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body) {
-    headers.set('Content-Type', 'application/json');
+  if (!headers.has("Content-Type") && options.body) {
+    headers.set("Content-Type", "application/json");
   }
 
   const mailboxToken = options.mailboxToken ?? getMailbox()?.token;
-  if (mailboxToken) headers.set('X-Mailbox-Token', mailboxToken);
+  if (mailboxToken) headers.set("X-Mailbox-Token", mailboxToken);
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
-    credentials: options.admin ? 'include' : options.credentials,
+    credentials: options.admin ? "include" : options.credentials,
   });
 
-  const contentType = res.headers.get('Content-Type') || '';
-  if (contentType.includes('application/json')) {
+  const contentType = res.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
     const json = (await res.json()) as ApiSuccess<T> | ApiFail;
     if (!json.success) {
-      throw new ApiError(json.error?.message || 'Request failed', res.status, json.error?.code);
+      throw new ApiError(
+        json.error?.message || "Request failed",
+        res.status,
+        json.error?.code,
+      );
     }
     return json.data;
   }
 
   if (!res.ok) {
-    throw new ApiError(res.statusText || 'Request failed', res.status);
+    throw new ApiError(res.statusText || "Request failed", res.status);
   }
   // non-json success (raw download handled separately)
   return undefined as T;
@@ -103,38 +107,45 @@ export interface EmailDetail {
 }
 
 export const api = {
-  health: () => request<{ status: string }>('/api/health'),
+  health: () => request<{ status: string }>("/api/health"),
 
-  listDomains: () => request<Array<{ id: number; domain_name: string }>>('/api/domains'),
+  listDomains: () =>
+    request<Array<{ id: number; domain_name: string }>>("/api/domains"),
 
   createMailbox: (payload?: { username?: string; domain?: string }) =>
-    request<Mailbox>('/api/mailbox', {
-      method: 'POST',
+    request<Mailbox>("/api/mailbox", {
+      method: "POST",
       body: JSON.stringify(payload || {}),
     }),
 
   getMailbox: (address: string, token: string) =>
     request<{ id: number; address: string; created_at: string }>(
       `/api/mailbox/${encodeURIComponent(address)}`,
-      { mailboxToken: token }
+      { mailboxToken: token },
     ),
 
   deleteMailbox: (address: string, token: string) =>
-    request<{ deleted: boolean }>(`/api/mailbox/${encodeURIComponent(address)}`, {
-      method: 'DELETE',
-      mailboxToken: token,
-    }),
+    request<{ deleted: boolean }>(
+      `/api/mailbox/${encodeURIComponent(address)}`,
+      {
+        method: "DELETE",
+        mailboxToken: token,
+      },
+    ),
 
   listEmails: (address: string, token: string, since?: string) =>
     request<{ address: string; emails: EmailListItem[]; count: number }>(
-      `/api/mailbox/${encodeURIComponent(address)}/emails${since ? `?since=${encodeURIComponent(since)}` : ''}`,
-      { mailboxToken: token }
+      `/api/mailbox/${encodeURIComponent(address)}/emails${since ? `?since=${encodeURIComponent(since)}` : ""}`,
+      { mailboxToken: token },
     ),
 
   getEmail: (address: string, token: string, id: number) =>
-    request<EmailDetail>(`/api/mailbox/${encodeURIComponent(address)}/emails/${id}`, {
-      mailboxToken: token,
-    }),
+    request<EmailDetail>(
+      `/api/mailbox/${encodeURIComponent(address)}/emails/${id}`,
+      {
+        mailboxToken: token,
+      },
+    ),
 
   rawEmailUrl: (address: string, id: number) =>
     `${API_BASE}/api/mailbox/${encodeURIComponent(address)}/emails/${id}/raw`,
@@ -144,12 +155,15 @@ export const api = {
 
   // Admin
   adminStatus: () =>
-    request<{ setup_completed: boolean; site_name: string; ttl_hours: number }>('/api/admin/status', {
-      admin: true,
-    }),
+    request<{ setup_completed: boolean; site_name: string; ttl_hours: number }>(
+      "/api/admin/status",
+      {
+        admin: true,
+      },
+    ),
 
   adminSession: () =>
-    request<{ authenticated: boolean }>('/api/admin/session', { admin: true }),
+    request<{ authenticated: boolean }>("/api/admin/session", { admin: true }),
 
   adminSetup: (body: {
     password: string;
@@ -157,21 +171,24 @@ export const api = {
     site_name?: string;
     ttl_hours?: number;
   }) =>
-    request<{ expires_in: number }>('/api/admin/setup', {
-      method: 'POST',
+    request<{ expires_in: number }>("/api/admin/setup", {
+      method: "POST",
       body: JSON.stringify(body),
       admin: true,
     }),
 
   adminLogin: (password: string) =>
-    request<{ expires_in: number }>('/api/admin/login', {
-      method: 'POST',
+    request<{ expires_in: number }>("/api/admin/login", {
+      method: "POST",
       body: JSON.stringify({ password }),
       admin: true,
     }),
 
   adminLogout: () =>
-    request<{ logged_out: boolean }>('/api/admin/logout', { method: 'POST', admin: true }),
+    request<{ logged_out: boolean }>("/api/admin/logout", {
+      method: "POST",
+      admin: true,
+    }),
 
   adminStats: () =>
     request<{
@@ -180,64 +197,67 @@ export const api = {
       emails: number;
       ttl_hours: number;
       site_name: string;
-    }>('/api/admin/stats', { admin: true }),
+    }>("/api/admin/stats", { admin: true }),
 
   adminSettings: () =>
     request<{
       site_name: string;
       ttl_hours: number;
       max_attachment_bytes: number;
-    }>(
-      '/api/admin/settings',
-      { admin: true }
-    ),
+    }>("/api/admin/settings", { admin: true }),
 
   adminUpdateSettings: (body: {
     site_name?: string;
     ttl_hours?: number;
     max_attachment_bytes?: number;
     new_password?: string;
+    current_password?: string;
   }) =>
     request<{
       site_name: string;
       ttl_hours: number;
       max_attachment_bytes: number;
       sessions_revoked: boolean;
-    }>(
-      '/api/admin/settings',
-      { method: 'PUT', body: JSON.stringify(body), admin: true }
-    ),
+    }>("/api/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+      admin: true,
+    }),
 
-  adminDomains: () => request<Domain[]>('/api/admin/domains', { admin: true }),
+  adminDomains: () => request<Domain[]>("/api/admin/domains", { admin: true }),
 
   adminAddDomain: (domain_name: string) =>
-    request<Domain>('/api/admin/domains', {
-      method: 'POST',
+    request<Domain>("/api/admin/domains", {
+      method: "POST",
       body: JSON.stringify({ domain_name }),
       admin: true,
     }),
 
   adminToggleDomain: (id: number, is_active: boolean) =>
     request<Domain>(`/api/admin/domains/${id}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: JSON.stringify({ is_active }),
       admin: true,
     }),
 
   adminDeleteDomain: (id: number) =>
     request<{ deleted: boolean }>(`/api/admin/domains/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
       admin: true,
     }),
 };
 
-export async function downloadWithToken(url: string, filename: string, token: string) {
+export async function downloadWithToken(
+  url: string,
+  filename: string,
+  token: string,
+) {
   const res = await fetch(url, {
-    headers: { 'X-Mailbox-Token': token },
+    headers: { "X-Mailbox-Token": token },
   });
-  if (!res.ok) throw new ApiError('Download failed', res.status);
+  if (!res.ok) throw new ApiError("Download failed", res.status);
   const blob = await res.blob();
-  const a = document.createElement('a');
+  const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   document.body.appendChild(a);
